@@ -319,7 +319,14 @@ if(NOT TARGET iPlug2::IGraphics::Skia)
   )
 
   if(WIN32)
-    set(SKIA_LIB_PATH ${SKIA_PATH}/out/Release-x64)
+    # Prebuilt libs from download-prebuilt-libs.sh live in Build/win/<arch>/<config>,
+    # not in the skia source tree. IGraphicsSkia.cpp also pulls skparagraph, skshaper
+    # and skunicode_* via #pragma comment, so the directory must be on the link path.
+    target_include_directories(iPlug2::IGraphics::Skia INTERFACE
+      ${SKIA_PATH}/third_party/externals/icu/source/common
+    )
+    set(SKIA_LIB_PATH ${DEPS_DIR}/Build/win/x64/$<IF:$<CONFIG:Debug>,Debug,Release>)
+    target_link_directories(iPlug2::IGraphics::Skia INTERFACE ${SKIA_LIB_PATH})
     target_link_libraries(iPlug2::IGraphics::Skia INTERFACE
       ${SKIA_LIB_PATH}/skia.lib
       ${SKIA_LIB_PATH}/svg.lib

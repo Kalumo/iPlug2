@@ -377,8 +377,11 @@ if(NOT TARGET iPlug2::IGraphics::Skia::GL3)
     )
   endif()
 
+  # IGraphicsWin.cpp includes glad for any GL renderer, so Skia/GL3 needs the same
+  # glad include paths that NanoVG/GL3 gets (provided by iPlug2::IGraphics::GL3).
   target_link_libraries(iPlug2::IGraphics::Skia::GL3 INTERFACE
     iPlug2::IGraphics::Skia
+    iPlug2::IGraphics::GL3
   )
 endif()
 

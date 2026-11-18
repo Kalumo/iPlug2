@@ -75,8 +75,10 @@ IGraphics::~IGraphics()
 void IGraphics::SetScreenScale(float scale)
 {
   mScreenScale = scale;
-  int windowWidth = WindowWidth() * GetPlatformWindowScale();
-  int windowHeight = WindowHeight() * GetPlatformWindowScale();
+  // Rounded, not truncated: at a fractional scale (1.25, 1.5) truncation lost a pixel, and
+  // OnParentWindowResize's division lost another, so the window shrank on every round trip.
+  int windowWidth = static_cast<int>(std::lround(WindowWidth() * GetPlatformWindowScale()));
+  int windowHeight = static_cast<int>(std::lround(WindowHeight() * GetPlatformWindowScale()));
   
   assert(windowWidth > 0 && windowHeight > 0 && "Window dimensions invalid");
 
@@ -105,8 +107,10 @@ void IGraphics::Resize(int w, int h, float scale, bool needsPlatformResize)
   if (mCornerResizer)
     mCornerResizer->OnRescale();
 
-  int windowWidth = WindowWidth() * GetPlatformWindowScale();
-  int windowHeight = WindowHeight() * GetPlatformWindowScale();
+  // Rounded, not truncated: at a fractional scale (1.25, 1.5) truncation lost a pixel, and
+  // OnParentWindowResize's division lost another, so the window shrank on every round trip.
+  int windowWidth = static_cast<int>(std::lround(WindowWidth() * GetPlatformWindowScale()));
+  int windowHeight = static_cast<int>(std::lround(WindowHeight() * GetPlatformWindowScale()));
 
   bool parentResized = GetDelegate()->EditorResizeFromUI(windowWidth, windowHeight, needsPlatformResize);
   PlatformResize(parentResized);

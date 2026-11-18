@@ -1035,8 +1035,12 @@ EMsgBoxResult IGraphicsWin::ShowMessageBox(const char* str, const char* title, E
 void* IGraphicsWin::OpenWindow(void* pParent)
 {
   mParentWnd = (HWND) pParent;
-  int screenScale = GetScaleForHWND(mParentWnd);
-  int x = 0, y = 0, w = WindowWidth() * screenScale, h = WindowHeight() * screenScale;
+  // A float: at 125% or 150% Windows scaling an int cut the scale to 1, so the window opened at
+  // 100% size and only grew when the timer noticed the real scale.
+  const float screenScale = GetScaleForHWND(mParentWnd);
+  int x = 0, y = 0;
+  int w = static_cast<int>(std::lround(WindowWidth() * screenScale));
+  int h = static_cast<int>(std::lround(WindowHeight() * screenScale));
 
   if (mPlugWnd)
   {

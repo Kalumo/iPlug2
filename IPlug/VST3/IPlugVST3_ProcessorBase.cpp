@@ -14,6 +14,9 @@
 #include "public.sdk/source/vst/vsteventshelper.h"
 #include "IPlugVST3_ProcessorBase.h"
 
+#include <algorithm>
+#include <cstring>
+
 using namespace iplug;
 using namespace Steinberg;
 using namespace Vst;
@@ -345,10 +348,100 @@ void IPlugVST3ProcessorBase::ProcessParameterChanges(ProcessData& data, IPlugQue
   }
 }
 
+void IPlugVST3ProcessorBase::ProcessAudioInChunks(ProcessData& data, ProcessSetup& setup, const BusList& ins, const BusList& outs, int32 blockSize)
+{
+  // Hosts may send more samples than the maxSamplesPerBlock they announced in setupProcessing,
+  // but the scratch buffers for single <-> double precision conversion are sized to it (upstream
+  // #1416: a heap overflow). Process such a block in chunks no larger than the announced size, by
+  // offsetting the host's channel pointers: no allocation, no extra copy.
+  // Limits: parameter changes, MIDI input and the transport position are taken once per host
+  // block, before the first chunk, and MIDI output offsets are relative to each chunk. Plugins
+  // without MIDI are unaffected.
+  constexpr int kMaxBuses = 16;
+  constexpr int kMaxChannels = 256;
+  const bool is64 = setup.symbolicSampleSize == kSample64;
+
+  int totalChannels = 0;
+  for (int32 i = 0; i < data.numInputs; i++)
+    totalChannels += data.inputs[i].numChannels;
+  for (int32 i = 0; i < data.numOutputs; i++)
+    totalChannels += data.outputs[i].numChannels;
+
+  if (data.numInputs > kMaxBuses || data.numOutputs > kMaxBuses || totalChannels > kMaxChannels)
+  {
+    // More buses or channels than the fixed pointer storage holds (no real plugin layout gets
+    // here): process the first chunk and silence the rest of the block, an audible dropout, but
+    // never an overflow.
+    ProcessData firstChunk = data;
+    firstChunk.numSamples = blockSize;
+    ProcessAudio(firstChunk, setup, ins, outs);
+    for (int32 i = 0; i < data.numOutputs; i++)
+    {
+      for (int32 c = 0; c < data.outputs[i].numChannels; c++)
+      {
+        if (is64 && data.outputs[i].channelBuffers64 && data.outputs[i].channelBuffers64[c])
+          memset(data.outputs[i].channelBuffers64[c] + blockSize, 0, (data.numSamples - blockSize) * sizeof(double));
+        else if (!is64 && data.outputs[i].channelBuffers32 && data.outputs[i].channelBuffers32[c])
+          memset(data.outputs[i].channelBuffers32[c] + blockSize, 0, (data.numSamples - blockSize) * sizeof(float));
+      }
+    }
+    return;
+  }
+
+  AudioBusBuffers inBuses[kMaxBuses];
+  AudioBusBuffers outBuses[kMaxBuses];
+  void* pointers[kMaxChannels];
+
+  ProcessData chunk = data;
+  chunk.inputs = inBuses;
+  chunk.outputs = outBuses;
+
+  for (int32 start = 0; start < data.numSamples; start += blockSize)
+  {
+    int used = 0;
+    auto offsetBus = [&](const AudioBusBuffers& source, AudioBusBuffers& target) {
+      target = source;
+      void** sourcePointers = is64 ? reinterpret_cast<void**>(source.channelBuffers64) : reinterpret_cast<void**>(source.channelBuffers32);
+      if (!sourcePointers)
+        return;
+      void** targetPointers = &pointers[used];
+      for (int32 c = 0; c < source.numChannels; c++)
+      {
+        if (!sourcePointers[c])
+          targetPointers[c] = nullptr;
+        else if (is64)
+          targetPointers[c] = static_cast<double*>(sourcePointers[c]) + start;
+        else
+          targetPointers[c] = static_cast<float*>(sourcePointers[c]) + start;
+      }
+      if (is64)
+        target.channelBuffers64 = reinterpret_cast<double**>(targetPointers);
+      else
+        target.channelBuffers32 = reinterpret_cast<float**>(targetPointers);
+      used += source.numChannels;
+    };
+
+    for (int32 i = 0; i < data.numInputs; i++)
+      offsetBus(data.inputs[i], inBuses[i]);
+    for (int32 i = 0; i < data.numOutputs; i++)
+      offsetBus(data.outputs[i], outBuses[i]);
+
+    chunk.numSamples = std::min(blockSize, data.numSamples - start);
+    ProcessAudio(chunk, setup, ins, outs);  // at most blockSize samples: processed directly
+  }
+}
+
 void IPlugVST3ProcessorBase::ProcessAudio(ProcessData& data, ProcessSetup& setup, const BusList& ins, const BusList& outs)
 {
+  const int32 blockSize = GetBlockSize();
+  if (blockSize > 0 && data.numSamples > blockSize)
+  {
+    ProcessAudioInChunks(data, setup, ins, outs, blockSize);
+    return;
+  }
+
   int32 sampleSize = setup.symbolicSampleSize;
-    
+
   if (sampleSize == kSample32 || sampleSize == kSample64)
   {
     if (data.numInputs)

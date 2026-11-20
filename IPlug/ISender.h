@@ -77,10 +77,13 @@ public:
   virtual void PrepareDataForUI(ISenderData<MAXNC, T>& d) { /* NO-OP*/ }
   
   /** Pops elements off the queue and sends messages to controls.
-   *  This must be called on the main thread - typically in MyPlugin::OnIdle() */
+   *  This must be called on the main thread - typically in MyPlugin::OnIdle()
+   *  Only the elements queued when the call starts are sent: an audio thread that pushes faster than
+   *  the UI can handle (e.g. a validator processing faster than real time) must not keep the main
+   *  thread in this loop forever; later elements wait for the next call. */
   void TransmitData(IEditorDelegate& dlg)
   {
-    while (mQueue.ElementsAvailable())
+    for (auto n = mQueue.ElementsAvailable(); n > 0; --n)
     {
       ISenderData<MAXNC, T> d;
       mQueue.Pop(d);
@@ -96,7 +99,8 @@ public:
    @param ctrlTags A list of control tags that should receive the updates from this sender */
   void TransmitDataToControlsWithTags(IEditorDelegate& dlg, const std::initializer_list<int>& ctrlTags)
   {
-    while(mQueue.ElementsAvailable())
+    // Bounded like TransmitData, for the same reason.
+    for (auto n = mQueue.ElementsAvailable(); n > 0; --n)
     {
       ISenderData<MAXNC, T> d;
       mQueue.Pop(d);
